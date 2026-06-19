@@ -2,9 +2,28 @@
   "name": "autocondition",
   "version": "0.1.0",
   "description": "Local-only Codex usage snapshot and automation gate over Codex CLI RPC.",
+  "author": "jskoiz",
+  "homepage": "https://github.com/jskoiz/autocondition#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/jskoiz/autocondition.git"
+  },
+  "bugs": {
+    "url": "https://github.com/jskoiz/autocondition/issues"
+  },
   "type": "module",
   "bin": {
     "autocondition": "bin/autocondition.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md",
+    "SECURITY.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
   },
   "scripts": {
     "test": "node --test",

@@ -36,6 +36,18 @@ describe("normalization", () => {
     assert.equal(snapshot.credits.balance, 12.5);
   });
 
+  it("normalizes reversed Codex windows like CodexBar", () => {
+    const snapshot = normalizeRateLimitsPayload({
+      rateLimits: {
+        primary: { usedPercent: 60, windowDurationMins: 10080, resetsAt: 1782432000 },
+        secondary: { usedPercent: 35, windowDurationMins: 300, resetsAt: 1781830800 },
+      },
+    }, null, { now });
+
+    assert.equal(snapshot.windows.session.used_percent, 35);
+    assert.equal(snapshot.windows.weekly.used_percent, 60);
+  });
+
   it("evaluates gates with AND semantics", () => {
     const snapshot = normalizeRateLimitsPayload({
       rateLimits: {
@@ -53,5 +65,21 @@ describe("normalization", () => {
       lane: "weekly",
       remainingAtLeast: 50,
     }).pass, false);
+  });
+
+  it("treats stale reset timestamps as indeterminate", () => {
+    const snapshot = normalizeRateLimitsPayload({
+      rateLimits: {
+        secondary: { usedPercent: 55, windowDurationMins: 10080, resetsAt: 1781820000 },
+      },
+    }, null, { now });
+
+    const gate = evaluateGate(snapshot, {
+      lane: "weekly",
+      resetsWithinSeconds: 10 * 24 * 60 * 60,
+    });
+
+    assert.equal(gate.status, "indeterminate");
+    assert.equal(gate.reason_code, "stale_reset");
   });
 });

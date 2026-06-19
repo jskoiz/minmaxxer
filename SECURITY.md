@@ -1,16 +1,16 @@
 # Security
 
-`autocondition` is intended to be local-only.
+`autocondition` is a local CLI. It does not run a daemon, expose an HTTP listener, or add telemetry.
 
 ## Secrets
 
-The prototype does not request, store, or print OAuth tokens. It delegates account access to the installed Codex CLI by launching `codex -s read-only -a untrusted app-server` and reading the rate-limit response over local stdio.
+`autocondition` does not request, store, or print OAuth tokens. It delegates account access to the installed Codex CLI and reads usage over local stdio. The Codex CLI can still perform its normal account, network, configuration, and logging operations.
 
-Do not paste access tokens into issues, logs, or shell transcripts. If future versions add direct OAuth, credentials should live in the OS keychain or another local secret store and never be printed by default.
+Do not paste access tokens into issues, logs, or shell transcripts.
 
 ## Network Exposure
 
-No daemon or HTTP listener runs by default. If a future `serve` mode is added, it should bind only to `127.0.0.1` or a Unix socket, avoid account PII by default, and never return raw tokens.
+No daemon or HTTP listener runs. Usage is printed only to the process that invoked the CLI.
 
 ## Reporting
 

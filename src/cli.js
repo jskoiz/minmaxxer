@@ -17,6 +17,15 @@ const EXIT = {
   args: 64,
 };
 
+const MAX_TIMEOUT_MS = 120_000;
+
+class UsageInputError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "UsageInputError";
+  }
+}
+
 export async function main(argv, io) {
   const command = argv[0];
   if (!command || command === "--help" || command === "-h") {
@@ -41,6 +50,10 @@ export async function main(argv, io) {
       io.stderr.write(`${error.message}\n`);
       return EXIT.sourceError;
     }
+    if (error instanceof UsageInputError) {
+      io.stderr.write(`${error.message}\n`);
+      return EXIT.args;
+    }
     io.stderr.write(`${error.message}\n`);
     return EXIT.args;
   }
@@ -50,34 +63,50 @@ export async function main(argv, io) {
 }
 
 async function snapshotCommand(argv, io) {
-  const args = parseOptions(argv);
+  const args = parseOptions("snapshot", argv);
+  if (args.help) {
+    io.stdout.write(helpText());
+    return EXIT.ok;
+  }
   const snapshot = await loadSnapshot(args, io.env);
   writeSnapshot(snapshot, args, io.stdout);
   return EXIT.ok;
 }
 
 async function gateCommand(argv, io) {
-  const args = parseOptions(argv);
+  const args = parseOptions("gate", argv);
+  if (args.help) {
+    io.stdout.write(helpText());
+    return EXIT.ok;
+  }
   const snapshot = await loadSnapshot(args, io.env);
   const gate = evaluateGate(snapshot, {
-    lane: args.lane ?? "weekly",
-    remainingAtLeast: args["remaining-at-least"],
-    usedAtMost: args["used-at-most"],
-    resetsWithinSeconds: args["resets-within"] ? parseDurationSeconds(args["resets-within"]) : undefined,
+    lane: args.lane,
+    remainingAtLeast: args.remainingAtLeast,
+    usedAtMost: args.usedAtMost,
+    resetsWithinSeconds: args.resetsWithinSeconds,
   });
 
   if (args.json) {
     io.stdout.write(`${JSON.stringify(gate, null, 2)}\n`);
   } else {
-    io.stdout.write(`${gate.pass ? "pass" : "skip"}: ${gate.reason}\n`);
+    io.stdout.write(`${gate.status}: ${gate.reason}\n`);
   }
+  if (gate.status === "indeterminate") return EXIT.sourceError;
   return gate.pass ? EXIT.ok : EXIT.gateFalse;
 }
 
 async function doctorCommand(argv, io) {
-  const args = parseOptions(argv);
+  const args = parseOptions("doctor", argv);
+  if (args.help) {
+    io.stdout.write(helpText());
+    return EXIT.ok;
+  }
   const codexBin = resolveCodexBin(args, io.env);
-  const version = spawnSync(codexBin, ["--version"], { encoding: "utf8" });
+  const version = spawnSync(codexBin, ["--version"], {
+    encoding: "utf8",
+    timeout: 3000,
+  });
   const report = {
     codex_bin: codexBin,
     codex_version_ok: version.status === 0,
@@ -109,8 +138,9 @@ async function doctorCommand(argv, io) {
 async function loadSnapshot(args, env) {
   const rpc = await fetchCodexRpcSnapshot({
     codexBin: resolveCodexBin(args, env),
-    timeoutMs: Number(args.timeout ?? 8000),
-    requestTimeoutMs: Number(args["request-timeout"] ?? 3000),
+    timeoutMs: args.timeoutMs ?? 8000,
+    requestTimeoutMs: args.requestTimeoutMs ?? 3000,
+    includeAccount: Boolean(args["include-account"]),
     env,
   });
   return normalizeRateLimitsPayload(rpc.rateLimits, rpc.account, {
@@ -136,29 +166,120 @@ function writeSnapshot(snapshot, args, stdout) {
 }
 
 function resolveCodexBin(args, env) {
-  return args["codex-bin"] ?? env.CODEX_USAGE_CODEX_BIN ?? "codex";
+  return args["codex-bin"] ?? env.AUTOCONDITION_CODEX_BIN ?? "codex";
 }
 
-function parseOptions(argv) {
+function parseOptions(command, argv) {
+  const optionSpec = commandOptions(command);
   const args = {};
   for (let i = 0; i < argv.length; i += 1) {
     const token = argv[i];
-    if (!token.startsWith("--")) {
-      throw new Error(`unexpected argument: ${token}`);
+    if (token === "--help" || token === "-h") {
+      assertNoDuplicate(args, "help");
+      args.help = true;
+      continue;
+    }
+    if (!token.startsWith("--") || token === "--") {
+      throw new UsageInputError(`unexpected argument: ${token}`);
     }
     const key = token.slice(2);
-    if (["json", "pretty", "include-account"].includes(key)) {
+    if (!optionSpec.allowed.has(key)) {
+      throw new UsageInputError(`unknown option for ${command}: --${key}`);
+    }
+    assertNoDuplicate(args, key);
+    if (optionSpec.booleans.has(key)) {
       args[key] = true;
       continue;
     }
     const value = argv[i + 1];
     if (!value || value.startsWith("--")) {
-      throw new Error(`missing value for --${key}`);
+      throw new UsageInputError(`missing value for --${key}`);
     }
     args[key] = value;
     i += 1;
   }
+  validateOptions(command, args);
   return args;
+}
+
+function commandOptions(command) {
+  const commonValues = new Set(["codex-bin", "timeout", "request-timeout"]);
+  const byCommand = {
+    snapshot: {
+      booleans: new Set(["json", "pretty", "include-account"]),
+      values: commonValues,
+    },
+    gate: {
+      booleans: new Set(["json"]),
+      values: new Set([...commonValues, "lane", "remaining-at-least", "used-at-most", "resets-within"]),
+    },
+    doctor: {
+      booleans: new Set(["json"]),
+      values: commonValues,
+    },
+  };
+  const spec = byCommand[command];
+  return {
+    booleans: spec.booleans,
+    values: spec.values,
+    allowed: new Set(["help", ...spec.booleans, ...spec.values]),
+  };
+}
+
+function assertNoDuplicate(args, key) {
+  if (Object.prototype.hasOwnProperty.call(args, key)) {
+    throw new UsageInputError(`duplicate option: --${key}`);
+  }
+}
+
+function validateOptions(command, args) {
+  if (args.timeout !== undefined) args.timeoutMs = parseTimeout(args.timeout, "--timeout");
+  if (args["request-timeout"] !== undefined) {
+    args.requestTimeoutMs = parseTimeout(args["request-timeout"], "--request-timeout");
+  }
+
+  if (command !== "gate") return;
+
+  args.lane = args.lane ?? "weekly";
+  if (!["session", "weekly"].includes(args.lane)) {
+    throw new UsageInputError("--lane must be session or weekly");
+  }
+
+  if (args["remaining-at-least"] !== undefined) {
+    args.remainingAtLeast = parsePercent(args["remaining-at-least"], "--remaining-at-least");
+  }
+  if (args["used-at-most"] !== undefined) {
+    args.usedAtMost = parsePercent(args["used-at-most"], "--used-at-most");
+  }
+  if (args["resets-within"] !== undefined) {
+    args.resetsWithinSeconds = parseDurationSeconds(args["resets-within"]);
+    if (!Number.isFinite(args.resetsWithinSeconds) || args.resetsWithinSeconds <= 0) {
+      throw new UsageInputError("--resets-within must be greater than 0");
+    }
+  }
+  if (
+    args.remainingAtLeast === undefined &&
+    args.usedAtMost === undefined &&
+    args.resetsWithinSeconds === undefined
+  ) {
+    throw new UsageInputError("gate requires at least one condition");
+  }
+}
+
+function parsePercent(value, flag) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 100) {
+    throw new UsageInputError(`${flag} must be a number from 0 to 100`);
+  }
+  return parsed;
+}
+
+function parseTimeout(value, flag) {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0 || parsed > MAX_TIMEOUT_MS) {
+    throw new UsageInputError(`${flag} must be an integer from 1 to ${MAX_TIMEOUT_MS}`);
+  }
+  return parsed;
 }
 
 function helpText() {
@@ -185,5 +306,6 @@ Exit codes:
   10 gate condition false
   2  Codex source unavailable
   3  Codex source error
+  64 invalid arguments
 `;
 }

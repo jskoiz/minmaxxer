@@ -9,6 +9,15 @@ export class CodexRpcError extends Error {
   }
 }
 
+const MAX_STDERR_CHARS = 4096;
+
+function sanitizeDiagnostic(value) {
+  return value
+    .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, "Bearer [redacted]")
+    .replace(/sk-[A-Za-z0-9_-]+/g, "[redacted-api-key]")
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[redacted-email]");
+}
+
 export async function fetchCodexRpcSnapshot(options = {}) {
   const client = new CodexRpcClient(options);
   try {
@@ -16,10 +25,12 @@ export async function fetchCodexRpcSnapshot(options = {}) {
     await client.initialize();
     const rateLimits = await client.request("account/rateLimits/read");
     let account = null;
-    try {
-      account = await client.request("account/read");
-    } catch {
-      account = null;
+    if (options.includeAccount === true) {
+      try {
+        account = await client.request("account/read");
+      } catch {
+        account = null;
+      }
     }
     return { rateLimits, account };
   } finally {
@@ -47,7 +58,7 @@ class CodexRpcClient {
     });
 
     this.process.stderr.on("data", (data) => {
-      this.stderr += data.toString("utf8");
+      this.stderr = (this.stderr + data.toString("utf8")).slice(-MAX_STDERR_CHARS);
     });
 
     this.process.on("error", (error) => {
@@ -56,7 +67,7 @@ class CodexRpcClient {
 
     this.process.on("exit", (code, signal) => {
       if (this.pending.size > 0) {
-        const detail = this.stderr.trim();
+        const detail = sanitizeDiagnostic(this.stderr.trim());
         const suffix = detail ? `: ${detail}` : "";
         this.rejectAll(new CodexRpcError(`codex app-server exited (${code ?? signal})${suffix}`, "EXITED"));
       }
