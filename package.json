@@ -1,0 +1,23 @@
+{
+  "name": "autocondition",
+  "version": "0.1.0",
+  "description": "Local-only Codex usage snapshot and automation gate over Codex CLI RPC.",
+  "type": "module",
+  "bin": {
+    "autocondition": "bin/autocondition.js"
+  },
+  "scripts": {
+    "test": "node --test",
+    "check": "npm test && node bin/autocondition.js --help"
+  },
+  "keywords": [
+    "codex",
+    "usage",
+    "automation",
+    "cli"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  }
+}
