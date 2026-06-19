@@ -1,14 +1,27 @@
 # autocondition
 
-A local CLI that turns your installed Codex usage windows into JSON or a script-friendly exit code.
+Make your Codex automations budget-aware with one line of shell.
 
-Use it to admit, defer, or prioritize optional Codex jobs from a point-in-time usage snapshot. It can answer questions like:
+`autocondition gate` reads your live Codex usage window and exits `0` or `10` — so a cron job, git hook, or script can decide for itself whether now is a good time to spend usage:
 
-- Do I still have enough weekly usage left for a heavier automation run?
-- Is my reset close enough that I should spend down remaining usage?
-- Should this script skip now and try again later?
+```bash
+if autocondition gate --lane weekly --remaining-at-least 30 --resets-within 3d; then
+  codex exec "Review the current branch against main and report risks."
+fi
+```
 
-`autocondition` does not schedule jobs, reserve usage, predict task cost, or run Codex on your behalf. It does not run a service or add telemetry. It invokes the installed Codex CLI over local stdio; the Codex CLI still performs its normal account, network, config, and logging operations.
+That is the whole idea: exit `0` means "go," exit `10` means "skip this time." No daemon, no config file, no second account — it just reads the usage your installed Codex CLI already knows about over local stdio.
+
+Want the numbers instead of a yes/no? `snapshot` gives you a point-in-time view:
+
+```text
+$ autocondition snapshot --pretty
+Codex usage (codex-cli-rpc)
+- session: 12% used, 88% remaining, resets in 3h
+- weekly: 64% used, 36% remaining, resets in 2d
+```
+
+**Why you'd want this:** you don't want a nightly automation burning your weekly Codex budget on low-value work — or leaving it unspent right before it resets. `autocondition` lets the exit code make that call for you.
 
 > Experimental: `autocondition` depends on the Codex app-server interface used by the installed Codex CLI. Known local check: `codex-cli 0.139.0`.
 
@@ -49,17 +62,9 @@ Exit codes:
 
 ## Automation Examples
 
-All gate conditions use AND semantics. A passed gate is only a point-in-time observation; it does not reserve capacity, so multiple jobs can pass at once.
+All gate conditions use AND semantics.
 
-Run a read-only review only when there is meaningful weekly usage left and the reset is close:
-
-```bash
-if autocondition gate --lane weekly --remaining-at-least 35 --resets-within 2d; then
-  codex exec "Review the current branch against main. Do not modify files. Report concrete correctness risks and missing tests."
-fi
-```
-
-Handle skip separately from source errors:
+The most important pattern is telling a real skip apart from a broken source. Exit `10` means usage was readable and your policy said no; `2` and `3` mean the usage data could not be read at all:
 
 ```bash
 if autocondition gate --lane weekly --remaining-at-least 35 --resets-within 2d; then
@@ -73,7 +78,14 @@ else
 fi
 ```
 
-Spend remaining usage on small cleanup during the last day before reset:
+The human-readable output tells you exactly why a gate skipped:
+
+```text
+$ autocondition gate --lane weekly --remaining-at-least 30
+skip: weekly.remaining_percent=20 is below required 30
+```
+
+Spend remaining usage on small cleanup during the last day before a reset:
 
 ```bash
 if autocondition gate --lane weekly --remaining-at-least 20 --resets-within 24h; then
@@ -81,21 +93,11 @@ if autocondition gate --lane weekly --remaining-at-least 20 --resets-within 24h;
 fi
 ```
 
-Protect your weekly budget by skipping optional work after usage gets too high:
+Cap optional work by how much you have already used (`--used-at-most`), and use `--lane session` for short local loops:
 
 ```bash
 if autocondition gate --lane weekly --used-at-most 70; then
   codex exec "run the optional repo health sweep"
-else
-  echo "Skipping optional Codex automation until usage resets."
-fi
-```
-
-Use session resets for short, local loops:
-
-```bash
-if autocondition gate --lane session --remaining-at-least 50; then
-  codex exec "Continue the next small item from my local task list and stop after one verified change."
 fi
 ```
 
@@ -117,6 +119,12 @@ autocondition snapshot --json | jq '.credits.balance'
 ```
 
 The fields most useful for automations are `used_percent`, `remaining_percent`, `resets_at`, `seconds_until_reset`, `reset_in`, and `credits.balance`. Treat `reset_in` as display text; use `seconds_until_reset` and `resets_at` for scripts.
+
+## What it doesn't do
+
+`autocondition` does not schedule jobs, reserve usage, predict task cost, or run Codex on your behalf. It does not run a service or add telemetry. It invokes the installed Codex CLI over local stdio; the Codex CLI still performs its normal account, network, config, and logging operations.
+
+A passed gate is only a point-in-time observation; it does not reserve capacity, so multiple jobs can pass at once.
 
 ## Security
 
