@@ -33,6 +33,7 @@ describe("normalization", () => {
     assert.equal(snapshot.account.plan, "pro");
     assert.equal(snapshot.windows.session.used_percent, 35);
     assert.equal(snapshot.windows.weekly.remaining_percent, 40);
+    assert.ok(snapshot.credits);
     assert.equal(snapshot.credits.balance, 12.5);
   });
 

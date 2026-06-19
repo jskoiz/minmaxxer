@@ -1,16 +1,112 @@
-function toNumber(value) {
+type RawWindowInput = {
+  usedPercent?: unknown;
+  used_percent?: unknown;
+  windowDurationMins?: unknown;
+  window_minutes?: unknown;
+  resetsAt?: unknown;
+  resets_at?: unknown;
+};
+
+type RawCreditsInput = {
+  hasCredits?: unknown;
+  has_credits?: unknown;
+  unlimited?: unknown;
+  balance?: unknown;
+};
+
+export type RawRateLimitsInput = {
+  rateLimits?: RawRateLimitsInput;
+  rate_limits?: RawRateLimitsInput;
+  primary?: RawWindowInput | null;
+  secondary?: RawWindowInput | null;
+  credits?: RawCreditsInput | null;
+  planType?: string | null;
+};
+
+type RawAccount = {
+  type?: string | null;
+  email?: string | null;
+  planType?: string | null;
+};
+
+export type AccountPayload = {
+  account?: RawAccount | null;
+};
+
+type NormalizeOptions = {
+  now?: Date;
+  includeAccount?: boolean;
+  version?: string;
+};
+
+export type UsageWindow = {
+  used_percent: number | null;
+  remaining_percent: number | null;
+  window_minutes: number | null;
+  resets_at: string | null;
+  seconds_until_reset: number | null;
+  reset_in: string | null;
+};
+
+export type Credits = {
+  has_credits: boolean;
+  unlimited: boolean;
+  balance: number | null;
+};
+
+export type UsageSnapshot = {
+  tool: "minmaxxer";
+  version: string;
+  source: "codex-cli-rpc";
+  updated_at: string;
+  account: {
+    type: string | null;
+    plan: string | null;
+    email: string | null;
+  };
+  windows: Record<string, UsageWindow>;
+  credits: Credits | null;
+};
+
+type GateOptions = {
+  lane?: string;
+  remainingAtLeast?: number;
+  usedAtMost?: number;
+  resetsWithinSeconds?: number;
+};
+
+type GateCheckName = "remaining_at_least" | "used_at_most" | "resets_within";
+
+export type GateCheck = {
+  name: GateCheckName;
+  pass: boolean;
+  actual: number | null;
+  expected: number;
+};
+
+export type GateResult = {
+  pass: boolean;
+  status: "pass" | "skip" | "indeterminate";
+  reason_code: string;
+  reason: string;
+  lane: string;
+  checks?: GateCheck[];
+  snapshot?: UsageSnapshot;
+};
+
+function toNumber(value: unknown): number | null {
   if (value === null || value === undefined || value === "") return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function toPercent(value) {
+function toPercent(value: unknown): number | null {
   const parsed = toNumber(value);
   if (parsed === null || parsed < 0 || parsed > 100) return null;
   return parsed;
 }
 
-function resetDescription(secondsUntilReset) {
+function resetDescription(secondsUntilReset: number | null): string | null {
   if (secondsUntilReset === null) return null;
   if (secondsUntilReset < 0) return "overdue";
   if (secondsUntilReset === 0) return "now";
@@ -21,7 +117,7 @@ function resetDescription(secondsUntilReset) {
   return `${Math.round(hours / 24)}d`;
 }
 
-export function normalizeWindow(raw, nowMs = Date.now()) {
+export function normalizeWindow(raw: RawWindowInput | null | undefined, nowMs = Date.now()): UsageWindow | null {
   if (!raw) return null;
   const used = toPercent(raw.usedPercent ?? raw.used_percent);
   const windowMinutes = toNumber(raw.windowDurationMins ?? raw.window_minutes);
@@ -39,21 +135,24 @@ export function normalizeWindow(raw, nowMs = Date.now()) {
   };
 }
 
-function laneForWindow(window, fallback) {
+function laneForWindow(window: UsageWindow | null, fallback: string): string {
   if (!window) return fallback;
   if (window.window_minutes === 300) return "session";
   if (window.window_minutes === 10080) return "weekly";
   return fallback;
 }
 
-function windowRole(window) {
+function windowRole(window: UsageWindow | null): "session" | "weekly" | "unknown" | "none" {
   if (!window) return "none";
   if (window.window_minutes === 300) return "session";
   if (window.window_minutes === 10080) return "weekly";
   return "unknown";
 }
 
-function normalizeSlots(primary, secondary) {
+function normalizeSlots(
+  primary: UsageWindow | null,
+  secondary: UsageWindow | null,
+): { primary: UsageWindow | null; secondary: UsageWindow | null } {
   const primaryRole = windowRole(primary);
   const secondaryRole = windowRole(secondary);
 
@@ -74,25 +173,29 @@ function normalizeSlots(primary, secondary) {
   return { primary, secondary };
 }
 
-export function normalizeRateLimitsPayload(payload, accountPayload = null, options = {}) {
+export function normalizeRateLimitsPayload(
+  payload: RawRateLimitsInput | null,
+  accountPayload: AccountPayload | null = null,
+  options: NormalizeOptions = {},
+): UsageSnapshot {
   const now = options.now ?? new Date();
   const nowMs = now.getTime();
-  const rateLimits = payload?.rateLimits ?? payload?.rate_limits ?? payload ?? {};
+  const rateLimits: RawRateLimitsInput = payload?.rateLimits ?? payload?.rate_limits ?? payload ?? {};
   const { primary, secondary } = normalizeSlots(
     normalizeWindow(rateLimits.primary, nowMs),
     normalizeWindow(rateLimits.secondary, nowMs),
   );
-  const windows = {};
+  const windows: Record<string, UsageWindow> = {};
 
   if (primary) windows[laneForWindow(primary, "primary")] = primary;
   if (secondary) windows[laneForWindow(secondary, "secondary")] = secondary;
 
   const account = accountPayload?.account ?? null;
-  const chatgptAccount = account?.type?.toLowerCase?.() === "chatgpt" ? account : null;
+  const chatgptAccount = account?.type?.toLowerCase() === "chatgpt" ? account : null;
   const includeAccount = options.includeAccount === true;
 
   return {
-    tool: "autocondition",
+    tool: "minmaxxer",
     version: options.version ?? "0.0.0",
     source: "codex-cli-rpc",
     updated_at: now.toISOString(),
@@ -106,7 +209,7 @@ export function normalizeRateLimitsPayload(payload, accountPayload = null, optio
   };
 }
 
-export function normalizeCredits(raw) {
+export function normalizeCredits(raw: RawCreditsInput | null | undefined): Credits | null {
   if (!raw) return null;
   return {
     has_credits: Boolean(raw.hasCredits ?? raw.has_credits),
@@ -115,7 +218,7 @@ export function normalizeCredits(raw) {
   };
 }
 
-export function evaluateGate(snapshot, options) {
+export function evaluateGate(snapshot: UsageSnapshot, options: GateOptions): GateResult {
   const lane = options.lane ?? "weekly";
   const window = snapshot.windows?.[lane];
   if (!window) {
@@ -128,7 +231,7 @@ export function evaluateGate(snapshot, options) {
     };
   }
 
-  const checks = [];
+  const checks: GateCheck[] = [];
   if (options.remainingAtLeast !== undefined) {
     const threshold = Number(options.remainingAtLeast);
     checks.push({
@@ -176,7 +279,7 @@ export function evaluateGate(snapshot, options) {
     };
   }
 
-  const staleReset = checks.find((check) => check.name === "resets_within" && check.actual < 0);
+  const staleReset = checks.find((check) => check.name === "resets_within" && check.actual !== null && check.actual < 0);
   if (staleReset) {
     return {
       pass: false,
@@ -190,19 +293,32 @@ export function evaluateGate(snapshot, options) {
   }
 
   const pass = checks.every((check) => check.pass);
+  if (pass) {
+    return {
+      pass,
+      status: "pass",
+      reason_code: "all_conditions_passed",
+      reason: "all conditions passed",
+      lane,
+      checks,
+      snapshot,
+    };
+  }
+
   const failed = checks.find((check) => !check.pass);
+  if (!failed) throw new Error("gate failure reason unavailable");
   return {
     pass,
-    status: pass ? "pass" : "skip",
-    reason_code: pass ? "all_conditions_passed" : failed.name,
-    reason: pass ? "all conditions passed" : gateFailureReason(lane, failed),
+    status: "skip",
+    reason_code: failed.name,
+    reason: gateFailureReason(lane, failed),
     lane,
     checks,
     snapshot,
   };
 }
 
-function gateFailureReason(lane, check) {
+function gateFailureReason(lane: string, check: GateCheck): string {
   if (check.name === "remaining_at_least") {
     return `${lane}.remaining_percent=${check.actual} is below required ${check.expected}`;
   }

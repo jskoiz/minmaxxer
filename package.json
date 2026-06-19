@@ -1,23 +1,23 @@
 {
-  "name": "autocondition",
+  "name": "minmaxxer",
   "version": "0.1.0",
   "description": "Local-only Codex usage snapshot and automation gate over Codex CLI RPC.",
   "author": "jskoiz",
-  "homepage": "https://github.com/jskoiz/autocondition#readme",
+  "homepage": "https://github.com/jskoiz/minmaxxer#readme",
   "repository": {
     "type": "git",
-    "url": "git+ssh://git@github.com/jskoiz/autocondition.git"
+    "url": "git+ssh://git@github.com/jskoiz/minmaxxer.git"
   },
   "bugs": {
-    "url": "https://github.com/jskoiz/autocondition/issues"
+    "url": "https://github.com/jskoiz/minmaxxer/issues"
   },
   "type": "module",
   "bin": {
-    "autocondition": "bin/autocondition.js"
+    "minmaxxer": "dist/bin/minmaxxer.js"
   },
   "files": [
-    "bin",
-    "src",
+    "dist/bin",
+    "dist/src",
     "README.md",
     "SECURITY.md",
     "LICENSE"
@@ -26,8 +26,10 @@
     "node": ">=20"
   },
   "scripts": {
-    "test": "node --test",
-    "check": "npm test && node bin/autocondition.js --help"
+    "build": "tsc -p tsconfig.json",
+    "postbuild": "node -e \"require('node:fs').chmodSync('dist/bin/minmaxxer.js', 0o755)\"",
+    "test": "npm run build && node --test \"dist/test/**/*.test.js\"",
+    "check": "npm test && node dist/bin/minmaxxer.js --help"
   },
   "keywords": [
     "codex",
@@ -36,7 +38,8 @@
     "cli"
   ],
   "license": "MIT",
-  "engines": {
-    "node": ">=20"
+  "devDependencies": {
+    "@types/node": "^26.0.0",
+    "typescript": "^6.0.3"
   }
 }

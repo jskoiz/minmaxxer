@@ -8,6 +8,7 @@ main(process.argv.slice(2), {
 }).then((code) => {
   process.exitCode = code;
 }).catch((error) => {
-  process.stderr.write(`autocondition: ${error?.message ?? String(error)}\n`);
+  const message = error instanceof Error ? error.message : String(error);
+  process.stderr.write(`minmaxxer: ${message}\n`);
   process.exitCode = 3;
 });

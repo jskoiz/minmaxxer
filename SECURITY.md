@@ -1,10 +1,10 @@
 # Security
 
-`autocondition` is a local CLI. It does not run a daemon, expose an HTTP listener, or add telemetry.
+`minmaxxer` is a local CLI. It does not run a daemon, expose an HTTP listener, or add telemetry.
 
 ## Secrets
 
-`autocondition` does not request, store, or print OAuth tokens. It delegates account access to the installed Codex CLI and reads usage over local stdio. The Codex CLI can still perform its normal account, network, configuration, and logging operations.
+`minmaxxer` does not request, store, or print OAuth tokens. It delegates account access to the installed Codex CLI and reads usage over local stdio. The Codex CLI can still perform its normal account, network, configuration, and logging operations.
 
 Do not paste access tokens into issues, logs, or shell transcripts.
 
