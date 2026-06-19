@@ -185,12 +185,14 @@ class CodexRpcClient {
 
   handleLine(line: string): void {
     if (!line.trim()) return;
-    let message: RpcResponse;
+    let parsed: unknown;
     try {
-      message = JSON.parse(line);
+      parsed = JSON.parse(line);
     } catch {
       return;
     }
+    if (typeof parsed !== "object" || parsed === null) return;
+    const message = parsed as RpcResponse;
     if (typeof message.id !== "number") return;
     const pending = this.pending.get(message.id);
     if (!pending) return;

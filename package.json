@@ -28,6 +28,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "postbuild": "node -e \"require('node:fs').chmodSync('dist/bin/minmaxxer.js', 0o755)\"",
+    "prepare": "npm run build",
     "test": "npm run build && node --test \"dist/test/**/*.test.js\"",
     "check": "npm test && node dist/bin/minmaxxer.js --help"
   },

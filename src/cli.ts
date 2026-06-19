@@ -25,7 +25,7 @@ type CliIo = {
 
 type Command = "snapshot" | "gate" | "doctor";
 
-type ParsedOptions = Record<string, string | number | boolean | undefined> & {
+type ParsedOptions = {
   help?: boolean;
   json?: boolean;
   pretty?: boolean;
@@ -229,14 +229,14 @@ function parseOptions(command: Command, argv: string[]): ParsedOptions {
     }
     assertNoDuplicate(args, key);
     if (optionSpec.booleans.has(key)) {
-      args[key] = true;
+      setParsedOption(args, key, true);
       continue;
     }
     const value = argv[i + 1];
     if (!value || value.startsWith("--")) {
       throw new UsageInputError(`missing value for --${key}`);
     }
-    args[key] = value;
+    setParsedOption(args, key, value);
     i += 1;
   }
   validateOptions(command, args);
@@ -265,6 +265,10 @@ function commandOptions(command: Command): OptionSpec {
     values: spec.values,
     allowed: new Set(["help", ...spec.booleans, ...spec.values]),
   };
+}
+
+function setParsedOption(args: ParsedOptions, key: string, value: string | boolean): void {
+  (args as Record<string, string | number | boolean | undefined>)[key] = value;
 }
 
 function assertNoDuplicate(args: ParsedOptions, key: string): void {

@@ -191,7 +191,7 @@ export function normalizeRateLimitsPayload(
   if (secondary) windows[laneForWindow(secondary, "secondary")] = secondary;
 
   const account = accountPayload?.account ?? null;
-  const chatgptAccount = account?.type?.toLowerCase() === "chatgpt" ? account : null;
+  const chatgptAccount = account?.type?.toLowerCase?.() === "chatgpt" ? account : null;
   const includeAccount = options.includeAccount === true;
 
   return {
