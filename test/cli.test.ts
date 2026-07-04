@@ -176,6 +176,107 @@ process.stdin.on("data", chunk => {
     assert.match(invalidPercent.stderr, /number from 0 to 100/);
   });
 
+  it("prints human-readable text by default for snapshot", () => {
+    const result = spawnSync("node", [
+      "dist/bin/minmaxxer.js",
+      "snapshot",
+      "--codex-bin",
+      mockCodex,
+    ], { cwd: process.cwd(), encoding: "utf8" });
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /Codex usage \(codex-cli-rpc\)/);
+    assert.match(result.stdout, /- weekly: 50% used, 50% remaining/);
+  });
+
+  it("rejects the removed --pretty flag", () => {
+    const result = spawnSync("node", [
+      "dist/bin/minmaxxer.js",
+      "snapshot",
+      "--pretty",
+      "--codex-bin",
+      mockCodex,
+    ], { cwd: process.cwd(), encoding: "utf8" });
+
+    assert.equal(result.status, 64);
+    assert.match(result.stderr, /unknown option/);
+  });
+
+  it("suppresses gate output with --quiet", () => {
+    const pass = spawnSync("node", [
+      "dist/bin/minmaxxer.js",
+      "gate",
+      "--quiet",
+      "--remaining-at-least",
+      "40",
+      "--codex-bin",
+      mockCodex,
+    ], { cwd: process.cwd(), encoding: "utf8" });
+
+    assert.equal(pass.status, 0, pass.stderr);
+    assert.equal(pass.stdout, "");
+
+    const skip = spawnSync("node", [
+      "dist/bin/minmaxxer.js",
+      "gate",
+      "--quiet",
+      "--remaining-at-least",
+      "80",
+      "--codex-bin",
+      mockCodex,
+    ], { cwd: process.cwd(), encoding: "utf8" });
+
+    assert.equal(skip.status, 10, skip.stderr);
+    assert.equal(skip.stdout, "");
+  });
+
+  it("prints command-specific help", () => {
+    const gateHelp = spawnSync("node", [
+      "dist/bin/minmaxxer.js",
+      "gate",
+      "--help",
+    ], { cwd: process.cwd(), encoding: "utf8" });
+
+    assert.equal(gateHelp.status, 0);
+    assert.match(gateHelp.stdout, /minmaxxer gate —/);
+    assert.match(gateHelp.stdout, /--quiet/);
+    assert.doesNotMatch(gateHelp.stdout, /--include-account/);
+
+    const snapshotHelp = spawnSync("node", [
+      "dist/bin/minmaxxer.js",
+      "snapshot",
+      "--help",
+    ], { cwd: process.cwd(), encoding: "utf8" });
+
+    assert.equal(snapshotHelp.status, 0);
+    assert.match(snapshotHelp.stdout, /minmaxxer snapshot —/);
+    assert.match(snapshotHelp.stdout, /--include-account/);
+    assert.doesNotMatch(snapshotHelp.stdout, /--lane/);
+  });
+
+  it("warns when the codex version is untested", () => {
+    const result = spawnSync("node", [
+      "dist/bin/minmaxxer.js",
+      "doctor",
+      "--codex-bin",
+      mockCodex,
+    ], { cwd: process.cwd(), encoding: "utf8" });
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /warning: codex-cli 9\.9\.9 has not been verified/);
+
+    const json = spawnSync("node", [
+      "dist/bin/minmaxxer.js",
+      "doctor",
+      "--json",
+      "--codex-bin",
+      mockCodex,
+    ], { cwd: process.cwd(), encoding: "utf8" });
+
+    assert.equal(json.status, 0, json.stderr);
+    assert.equal(JSON.parse(json.stdout).codex_version_tested, false);
+  });
+
   it("reports doctor status", () => {
     const result = spawnSync("node", [
       "dist/bin/minmaxxer.js",

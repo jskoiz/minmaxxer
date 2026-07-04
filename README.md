@@ -15,7 +15,7 @@ That is the whole idea: exit `0` means "go," exit `10` means "skip this time." N
 Want the numbers instead of a yes/no? `snapshot` gives you a point-in-time view:
 
 ```text
-$ minmaxxer snapshot --pretty
+$ minmaxxer snapshot
 Codex usage (codex-cli-rpc)
 - session: 12% used, 88% remaining, resets in 3h
 - weekly: 64% used, 36% remaining, resets in 2d
@@ -23,7 +23,7 @@ Codex usage (codex-cli-rpc)
 
 **Why you'd want this:** you don't want a nightly automation burning your weekly Codex budget on low-value work — or leaving it unspent right before it resets. `minmaxxer` lets the exit code make that call for you.
 
-> Experimental: `minmaxxer` depends on the Codex app-server interface used by the installed Codex CLI. Known local check: `codex-cli 0.139.0`.
+> Experimental: `minmaxxer` depends on the Codex app-server interface used by the installed Codex CLI. Known local check: `codex-cli 0.139.0`. Run `minmaxxer doctor` to check connectivity — it warns when your Codex version has not been verified against this tool.
 
 ## Requirements
 
@@ -44,10 +44,12 @@ npm link
 ## Commands
 
 ```bash
-minmaxxer snapshot --json
+minmaxxer snapshot            # human-readable text; add --json for machine output
 minmaxxer gate --lane weekly --remaining-at-least 30 --resets-within 3d
 minmaxxer doctor
 ```
+
+Every command supports `--help` for its full option list. `gate --quiet` suppresses output entirely when only the exit code matters (e.g. in cron).
 
 Exit codes:
 

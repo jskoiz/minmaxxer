@@ -28,7 +28,7 @@ type Command = "snapshot" | "gate" | "doctor";
 type ParsedOptions = {
   help?: boolean;
   json?: boolean;
-  pretty?: boolean;
+  quiet?: boolean;
   "include-account"?: boolean;
   "codex-bin"?: string;
   timeout?: string;
@@ -59,6 +59,9 @@ const EXIT = {
 };
 
 const MAX_TIMEOUT_MS = 120_000;
+
+// Codex CLI versions the RPC integration has been verified against.
+const TESTED_CODEX_VERSIONS = /^codex-cli 0\.139\./;
 
 class UsageInputError extends Error {
   constructor(message: string) {
@@ -106,7 +109,7 @@ export async function main(argv: string[], io: CliIo): Promise<number> {
 async function snapshotCommand(argv: string[], io: CliIo): Promise<number> {
   const args = parseOptions("snapshot", argv);
   if (args.help === true) {
-    io.stdout.write(helpText());
+    io.stdout.write(helpText("snapshot"));
     return EXIT.ok;
   }
   const snapshot = await loadSnapshot(args, io.env);
@@ -117,7 +120,7 @@ async function snapshotCommand(argv: string[], io: CliIo): Promise<number> {
 async function gateCommand(argv: string[], io: CliIo): Promise<number> {
   const args = parseOptions("gate", argv);
   if (args.help === true) {
-    io.stdout.write(helpText());
+    io.stdout.write(helpText("gate"));
     return EXIT.ok;
   }
   const snapshot = await loadSnapshot(args, io.env);
@@ -130,17 +133,20 @@ async function gateCommand(argv: string[], io: CliIo): Promise<number> {
 
   if (args.json === true) {
     io.stdout.write(`${JSON.stringify(gate, null, 2)}\n`);
-  } else {
+  } else if (args.quiet !== true) {
     io.stdout.write(`${gate.status}: ${gate.reason}\n`);
   }
-  if (gate.status === "indeterminate") return EXIT.sourceError;
+  if (gate.status === "indeterminate") {
+    if (args.quiet === true && args.json !== true) io.stderr.write(`${gate.reason}\n`);
+    return EXIT.sourceError;
+  }
   return gate.pass ? EXIT.ok : EXIT.gateFalse;
 }
 
 async function doctorCommand(argv: string[], io: CliIo): Promise<number> {
   const args = parseOptions("doctor", argv);
   if (args.help === true) {
-    io.stdout.write(helpText());
+    io.stdout.write(helpText("doctor"));
     return EXIT.ok;
   }
   const codexBin = resolveCodexBin(args, io.env);
@@ -148,10 +154,12 @@ async function doctorCommand(argv: string[], io: CliIo): Promise<number> {
     encoding: "utf8",
     timeout: 3000,
   });
+  const codexVersion = version.status === 0 ? version.stdout.trim() : null;
   const report = {
     codex_bin: codexBin,
     codex_version_ok: version.status === 0,
-    codex_version: version.status === 0 ? version.stdout.trim() : null,
+    codex_version: codexVersion,
+    codex_version_tested: codexVersion !== null && TESTED_CODEX_VERSIONS.test(codexVersion),
     rpc_ok: false,
     error: null as string | null,
   };
@@ -169,6 +177,9 @@ async function doctorCommand(argv: string[], io: CliIo): Promise<number> {
     io.stdout.write(`codex binary: ${report.codex_bin}\n`);
     io.stdout.write(`codex --version: ${report.codex_version_ok ? report.codex_version : "failed"}\n`);
     io.stdout.write(`rpc snapshot: ${report.rpc_ok ? "ok" : "failed"}\n`);
+    if (report.codex_version_ok && !report.codex_version_tested) {
+      io.stdout.write(`warning: ${report.codex_version} has not been verified with minmaxxer; the app-server interface may differ\n`);
+    }
     if (report.error) io.stdout.write(`error: ${report.error}\n`);
   }
 
@@ -182,6 +193,7 @@ async function loadSnapshot(args: ParsedOptions, env: NodeJS.ProcessEnv): Promis
     timeoutMs: args.timeoutMs ?? 8000,
     requestTimeoutMs: args.requestTimeoutMs ?? 3000,
     includeAccount: args["include-account"] === true,
+    clientVersion: packageJson.version,
     env,
   });
   return normalizeRateLimitsPayload(rpc.rateLimits, rpc.account, {
@@ -191,8 +203,8 @@ async function loadSnapshot(args: ParsedOptions, env: NodeJS.ProcessEnv): Promis
 }
 
 function writeSnapshot(snapshot: UsageSnapshot, args: ParsedOptions, stdout: WritableLike): void {
-  if (args.json === true || args.pretty !== true) {
-    stdout.write(`${JSON.stringify(snapshot, null, args.pretty === true ? 2 : 0)}\n`);
+  if (args.json === true) {
+    stdout.write(`${JSON.stringify(snapshot, null, 2)}\n`);
     return;
   }
   stdout.write(`Codex usage (${snapshot.source})\n`);
@@ -247,11 +259,11 @@ function commandOptions(command: Command): OptionSpec {
   const commonValues = new Set(["codex-bin", "timeout", "request-timeout"]);
   const byCommand = {
     snapshot: {
-      booleans: new Set(["json", "pretty", "include-account"]),
+      booleans: new Set(["json", "include-account"]),
       values: commonValues,
     },
     gate: {
-      booleans: new Set(["json"]),
+      booleans: new Set(["json", "quiet"]),
       values: new Set([...commonValues, "lane", "remaining-at-least", "used-at-most", "resets-within"]),
     },
     doctor: {
@@ -278,6 +290,7 @@ function assertNoDuplicate(args: ParsedOptions, key: string): void {
 }
 
 function validateOptions(command: Command, args: ParsedOptions): void {
+  if (args.help === true) return;
   if (args.timeout !== undefined) args.timeoutMs = parseTimeout(args.timeout, "--timeout");
   if (args["request-timeout"] !== undefined) {
     args.requestTimeoutMs = parseTimeout(args["request-timeout"], "--request-timeout");
@@ -327,31 +340,80 @@ function parseTimeout(value: string, flag: string): number {
   return parsed;
 }
 
-function helpText(): string {
+const COMMON_OPTIONS_HELP = `  --codex-bin <path>        Codex executable. Default: codex
+  --timeout <ms>            RPC initialize timeout. Default: 8000
+  --request-timeout <ms>    RPC request timeout. Default: 3000`;
+
+const EXIT_CODES_HELP = `Exit codes:
+  0  success or gate passed
+  10 gate condition false
+  2  Codex source unavailable
+  3  Codex source error
+  64 invalid arguments`;
+
+function helpText(command?: Command): string {
+  if (command === "snapshot") {
+    return `minmaxxer snapshot — print the current Codex usage windows
+
+Usage:
+  minmaxxer snapshot [--json] [--include-account]
+
+Options:
+  --json                    Machine-readable JSON instead of human text
+  --include-account         Include the signed-in account email in output
+${COMMON_OPTIONS_HELP}
+`;
+  }
+  if (command === "gate") {
+    return `minmaxxer gate — exit 0 when usage conditions pass, 10 when they do not
+
+Usage:
+  minmaxxer gate --lane weekly --remaining-at-least 30 --resets-within 3d [--json] [--quiet]
+
+Options:
+  --lane <session|weekly>   Gate lane. Default: weekly
+  --remaining-at-least <n>  Pass when remaining percent is at least n
+  --used-at-most <n>        Pass when used percent is at most n
+  --resets-within <dur>     Pass when reset is within duration, e.g. 12h or 3d
+  --json                    Print the full gate evaluation as JSON
+  --quiet                   No output; the exit code is the answer
+${COMMON_OPTIONS_HELP}
+
+All conditions must pass (AND semantics). At least one condition is required.
+
+${EXIT_CODES_HELP}
+`;
+  }
+  if (command === "doctor") {
+    return `minmaxxer doctor — check the Codex binary and RPC connectivity
+
+Usage:
+  minmaxxer doctor [--json]
+
+Options:
+  --json                    Machine-readable JSON instead of human text
+${COMMON_OPTIONS_HELP}
+`;
+  }
   return `minmaxxer ${packageJson.version}
 
 Local-only Codex usage snapshot and automation gate.
 
 Usage:
-  minmaxxer snapshot [--json] [--pretty] [--include-account]
-  minmaxxer gate --lane weekly --remaining-at-least 30 --resets-within 3d [--json]
+  minmaxxer snapshot [--json] [--include-account]
+  minmaxxer gate --lane weekly --remaining-at-least 30 --resets-within 3d [--json] [--quiet]
   minmaxxer doctor [--json]
 
+Run "minmaxxer <command> --help" for command-specific options.
+
 Options:
-  --codex-bin <path>        Codex executable. Default: codex
-  --timeout <ms>            RPC initialize timeout. Default: 8000
-  --request-timeout <ms>    RPC request timeout. Default: 3000
+${COMMON_OPTIONS_HELP}
   --lane <session|weekly>   Gate lane. Default: weekly
   --remaining-at-least <n>  Pass when remaining percent is at least n
   --used-at-most <n>        Pass when used percent is at most n
   --resets-within <dur>     Pass when reset is within duration, e.g. 12h or 3d
 
-Exit codes:
-  0  success or gate passed
-  10 gate condition false
-  2  Codex source unavailable
-  3  Codex source error
-  64 invalid arguments
+${EXIT_CODES_HELP}
 `;
 }
 

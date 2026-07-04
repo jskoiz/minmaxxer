@@ -142,37 +142,6 @@ function laneForWindow(window: UsageWindow | null, fallback: string): string {
   return fallback;
 }
 
-function windowRole(window: UsageWindow | null): "session" | "weekly" | "unknown" | "none" {
-  if (!window) return "none";
-  if (window.window_minutes === 300) return "session";
-  if (window.window_minutes === 10080) return "weekly";
-  return "unknown";
-}
-
-function normalizeSlots(
-  primary: UsageWindow | null,
-  secondary: UsageWindow | null,
-): { primary: UsageWindow | null; secondary: UsageWindow | null } {
-  const primaryRole = windowRole(primary);
-  const secondaryRole = windowRole(secondary);
-
-  if (primary && secondary) {
-    if (
-      (primaryRole === "weekly" && secondaryRole === "session") ||
-      (primaryRole === "weekly" && secondaryRole === "unknown")
-    ) {
-      return { primary: secondary, secondary: primary };
-    }
-    return { primary, secondary };
-  }
-
-  if (primary && primaryRole === "weekly") return { primary: null, secondary: primary };
-  if (secondary && (secondaryRole === "session" || secondaryRole === "unknown")) {
-    return { primary: secondary, secondary: null };
-  }
-  return { primary, secondary };
-}
-
 export function normalizeRateLimitsPayload(
   payload: RawRateLimitsInput | null,
   accountPayload: AccountPayload | null = null,
@@ -181,10 +150,8 @@ export function normalizeRateLimitsPayload(
   const now = options.now ?? new Date();
   const nowMs = now.getTime();
   const rateLimits: RawRateLimitsInput = payload?.rateLimits ?? payload?.rate_limits ?? payload ?? {};
-  const { primary, secondary } = normalizeSlots(
-    normalizeWindow(rateLimits.primary, nowMs),
-    normalizeWindow(rateLimits.secondary, nowMs),
-  );
+  const primary = normalizeWindow(rateLimits.primary, nowMs);
+  const secondary = normalizeWindow(rateLimits.secondary, nowMs);
   const windows: Record<string, UsageWindow> = {};
 
   if (primary) windows[laneForWindow(primary, "primary")] = primary;

@@ -1,5 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { createInterface } from "node:readline";
+import { createInterface, type Interface } from "node:readline";
 import type { AccountPayload, RawRateLimitsInput } from "./normalize.js";
 
 type RpcErrorCode = "RPC_ERROR" | "START_FAILED" | "NOT_RUNNING" | "EXITED" | "TIMEOUT" | "REQUEST_FAILED";
@@ -15,12 +15,14 @@ export class CodexRpcError extends Error {
 }
 
 const MAX_STDERR_CHARS = 4096;
+const KILL_GRACE_MS = 2000;
 
 type RpcOptions = {
   codexBin?: string;
   timeoutMs?: number;
   requestTimeoutMs?: number;
   includeAccount?: boolean;
+  clientVersion?: string;
   env?: NodeJS.ProcessEnv;
 };
 
@@ -80,21 +82,25 @@ class CodexRpcClient {
   private codexBin: string;
   private timeoutMs: number;
   private requestTimeoutMs: number;
+  private clientVersion: string;
   private env: NodeJS.ProcessEnv;
   private nextId: number;
   private pending: Map<number, PendingRequest>;
   private stderr: string;
   private process: ChildProcessWithoutNullStreams | null;
+  private readline: Interface | null;
 
   constructor(options: RpcOptions = {}) {
     this.codexBin = options.codexBin ?? "codex";
     this.timeoutMs = options.timeoutMs ?? 8000;
     this.requestTimeoutMs = options.requestTimeoutMs ?? 3000;
+    this.clientVersion = options.clientVersion ?? "0.0.0";
     this.env = options.env ?? process.env;
     this.nextId = 1;
     this.pending = new Map();
     this.stderr = "";
     this.process = null;
+    this.readline = null;
   }
 
   async start(): Promise<void> {
@@ -104,6 +110,10 @@ class CodexRpcClient {
       stdio: ["pipe", "pipe", "pipe"],
     });
     const child = this.process;
+
+    // A write can race the child's death; the exit handler reports the real
+    // failure, so an EPIPE on stdin must not crash the process.
+    child.stdin.on("error", () => {});
 
     child.stderr.on("data", (data: Buffer) => {
       this.stderr = (this.stderr + data.toString("utf8")).slice(-MAX_STDERR_CHARS);
@@ -121,25 +131,23 @@ class CodexRpcClient {
       }
     });
 
-    const rl = createInterface({
+    this.readline = createInterface({
       input: child.stdout,
       crlfDelay: Infinity,
     });
-    rl.on("line", (line: string) => this.handleLine(line));
+    this.readline.on("line", (line: string) => this.handleLine(line));
 
     await new Promise<void>((resolve, reject) => {
       const onError = (error: Error) => {
-        cleanup();
+        child.off("spawn", onSpawn);
         reject(new CodexRpcError(error.message, "START_FAILED"));
       };
-      const cleanup = () => {
+      const onSpawn = () => {
         child.off("error", onError);
+        resolve();
       };
       child.once("error", onError);
-      setImmediate(() => {
-        cleanup();
-        resolve();
-      });
+      child.once("spawn", onSpawn);
     });
   }
 
@@ -147,7 +155,7 @@ class CodexRpcClient {
     await this.request("initialize", {
       clientInfo: {
         name: "minmaxxer",
-        version: "0.1.0",
+        version: this.clientVersion,
       },
     }, this.timeoutMs);
     this.notify("initialized");
@@ -214,9 +222,29 @@ class CodexRpcClient {
   }
 
   close(): void {
-    if (!this.process) return;
-    if (!this.process.killed) {
-      this.process.kill("SIGTERM");
+    if (this.readline) {
+      this.readline.close();
+      this.readline = null;
     }
+    const child = this.process;
+    if (!child) return;
+    this.process = null;
+
+    child.stdin.destroy();
+    child.stdout.destroy();
+    child.stderr.destroy();
+
+    if (child.exitCode === null && child.signalCode === null) {
+      child.kill("SIGTERM");
+      // Escalate if the app-server ignores SIGTERM; unref'd so a stubborn
+      // child never keeps the CLI's event loop alive past its own work.
+      const killTimer = setTimeout(() => {
+        if (child.exitCode === null && child.signalCode === null) {
+          child.kill("SIGKILL");
+        }
+      }, KILL_GRACE_MS);
+      killTimer.unref();
+    }
+    child.unref();
   }
 }
