@@ -3,13 +3,15 @@
 [![CI](https://github.com/jskoiz/minmaxxer/actions/workflows/ci.yml/badge.svg)](https://github.com/jskoiz/minmaxxer/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-`minmaxxer gate` exits `0` when your Codex usage says "go" and `10` when it says "skip" — so a cron job or git hook can stop burning your weekly budget on low-value work, or spend it before it resets. One line of shell, no daemon, no config; it reads what your installed Codex CLI already knows over local stdio.
+**minmaxxer decides whether a Codex automation should run right now, based on how much usage you have left.** You set the thresholds; `minmaxxer gate` checks your live usage and exits `0` for "run it" or `10` for "skip it" — so any cron job, git hook, or script can gate itself with one line of shell. No daemon, no config file; it reads the usage your installed Codex CLI already knows about over local stdio.
 
 ```bash
 if minmaxxer gate --lane weekly --remaining-at-least 30 --resets-within 3d; then
   codex exec "Review the current branch against main and report risks."
 fi
 ```
+
+That keeps a nightly job from draining your weekly budget on low-value work — or, flipped around, lets you spend leftover budget before it resets.
 
 Want the numbers instead of a yes/no? `snapshot` gives you a point-in-time view:
 
