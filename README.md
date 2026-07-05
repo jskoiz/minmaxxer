@@ -1,16 +1,15 @@
 # minmaxxer
 
-Make your Codex automations budget-aware with one line of shell.
+[![CI](https://github.com/jskoiz/minmaxxer/actions/workflows/ci.yml/badge.svg)](https://github.com/jskoiz/minmaxxer/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-`minmaxxer gate` reads your live Codex usage window and exits `0` or `10` — so a cron job, git hook, or script can decide for itself whether now is a good time to spend usage:
+`minmaxxer gate` exits `0` when your Codex usage says "go" and `10` when it says "skip" — so a cron job or git hook can stop burning your weekly budget on low-value work, or spend it before it resets. One line of shell, no daemon, no config; it reads what your installed Codex CLI already knows over local stdio.
 
 ```bash
 if minmaxxer gate --lane weekly --remaining-at-least 30 --resets-within 3d; then
   codex exec "Review the current branch against main and report risks."
 fi
 ```
-
-That is the whole idea: exit `0` means "go," exit `10` means "skip this time." No daemon, no config file, no second account — it just reads the usage your installed Codex CLI already knows about over local stdio.
 
 Want the numbers instead of a yes/no? `snapshot` gives you a point-in-time view:
 
@@ -21,53 +20,52 @@ Codex usage (codex-cli-rpc)
 - weekly: 64% used, 36% remaining, resets in 2d
 ```
 
-**Why you'd want this:** you don't want a nightly automation burning your weekly Codex budget on low-value work — or leaving it unspent right before it resets. `minmaxxer` lets the exit code make that call for you.
-
-> Experimental: `minmaxxer` depends on the Codex app-server interface used by the installed Codex CLI. Known local check: `codex-cli 0.139.0`. Run `minmaxxer doctor` to check connectivity — it warns when your Codex version has not been verified against this tool.
-
-## Requirements
-
-- Node.js 20 or later
-- An installed Codex CLI
-- A signed-in Codex account that reports ChatGPT-backed rate-limit windows
+> Experimental: depends on the Codex app-server interface. Verified against `codex-cli 0.139.0`; `minmaxxer doctor` warns on unverified versions.
 
 ## Install
 
-From source:
+Not on npm yet — install from source:
 
 ```bash
-npm install
-npm run build
-npm link
+git clone https://github.com/jskoiz/minmaxxer.git
+cd minmaxxer
+npm install && npm link
 ```
 
-## Commands
+Requires Node.js 20+ and a signed-in Codex CLI that reports ChatGPT-backed rate-limit windows.
+
+## Usage
 
 ```bash
-minmaxxer snapshot            # human-readable text; add --json for machine output
+minmaxxer snapshot            # human-readable text; --json for machine output
 minmaxxer gate --lane weekly --remaining-at-least 30 --resets-within 3d
-minmaxxer doctor
+minmaxxer doctor              # checks the Codex binary and RPC connectivity
 ```
 
-Every command supports `--help` for its full option list. `gate --quiet` suppresses output entirely when only the exit code matters (e.g. in cron).
+Gate conditions — all given conditions must pass (AND semantics), and at least one is required:
+
+- `--lane <session|weekly>` — which usage window to check (default: weekly)
+- `--remaining-at-least <n>` — remaining percent is at least `n`
+- `--used-at-most <n>` — used percent is at most `n`
+- `--resets-within <dur>` — window resets within a duration like `12h` or `3d`
+
+Every command supports `--help`. `gate --quiet` suppresses output when only the exit code matters.
 
 Exit codes:
 
 ```text
 0  success or gate passed
-10 gate condition false
+10 gate condition false — usage was readable, your policy said no
 2  local Codex usage is unavailable
 3  local Codex usage returned an error
 64 invalid arguments
 ```
 
-`10` means the usage data was readable and the policy was false. `2`, `3`, and `64` should be treated as real errors by automation.
+Treat `2`, `3`, and `64` as real errors in automation; only `10` is a clean "skip this time."
 
-## Automation Examples
+## Recipes
 
-All gate conditions use AND semantics.
-
-The most important pattern is telling a real skip apart from a broken source. Exit `10` means usage was readable and your policy said no; `2` and `3` mean the usage data could not be read at all:
+Tell a real skip apart from a broken source:
 
 ```bash
 if minmaxxer gate --lane weekly --remaining-at-least 35 --resets-within 2d; then
@@ -81,13 +79,6 @@ else
 fi
 ```
 
-The human-readable output tells you exactly why a gate skipped:
-
-```text
-$ minmaxxer gate --lane weekly --remaining-at-least 30
-skip: weekly.remaining_percent=20 is below required 30
-```
-
 Spend remaining usage on small cleanup during the last day before a reset:
 
 ```bash
@@ -96,51 +87,25 @@ if minmaxxer gate --lane weekly --remaining-at-least 20 --resets-within 24h; the
 fi
 ```
 
-Cap optional work by how much you have already used (`--used-at-most`), and use `--lane session` for short local loops:
+The human-readable output says exactly why a gate skipped (`skip: weekly.remaining_percent=20 is below required 30`), and the same pattern works anywhere an exit code decides: cron, launchd, git hooks, CI. Use `--used-at-most` to cap optional work and `--lane session` for short local loops.
 
-```bash
-if minmaxxer gate --lane weekly --used-at-most 70; then
-  codex exec "run the optional repo health sweep"
-fi
-```
+## JSON output
 
-Pair it with cron or launchd by letting the exit code decide whether the job runs:
-
-```bash
-minmaxxer gate --lane weekly --remaining-at-least 35 --resets-within 2d \
-  && codex exec "Inspect stale local branches and recommend keep, rebase, extract, or delete."
-```
-
-## Snapshot Output
-
-Use `snapshot` when you want to make your own decision in a script:
+Use `snapshot --json` when you want to make the decision yourself:
 
 ```bash
 minmaxxer snapshot --json | jq '.windows.weekly.remaining_percent'
-minmaxxer snapshot --json | jq -r '.windows.weekly.reset_in'
-minmaxxer snapshot --json | jq '.credits.balance'
 ```
 
-The fields most useful for automations are `used_percent`, `remaining_percent`, `resets_at`, `seconds_until_reset`, `reset_in`, and `credits.balance`. Treat `reset_in` as display text; use `seconds_until_reset` and `resets_at` for scripts.
+The useful fields per window are `used_percent`, `remaining_percent`, `resets_at`, `seconds_until_reset`, and `reset_in`, plus `credits.balance`. `reset_in` is display text; script against `seconds_until_reset` or `resets_at`.
 
-## What it doesn't do
+## Scope
 
-`minmaxxer` does not schedule jobs, reserve usage, predict task cost, or run Codex on your behalf. It does not run a service or add telemetry. It invokes the installed Codex CLI over local stdio; the Codex CLI still performs its normal account, network, config, and logging operations.
-
-A passed gate is only a point-in-time observation; it does not reserve capacity, so multiple jobs can pass at once.
-
-## Security
-
-- This tool does not run its own server or daemon.
-- It uses your existing Codex login.
-- Use `--include-account` only when you explicitly want the account email in JSON output.
-- Without `--include-account`, `minmaxxer` does not request account details from the Codex app-server.
+`minmaxxer` does not schedule jobs, reserve usage, predict task cost, or run Codex for you — a passed gate is a point-in-time observation, so concurrent jobs can all pass at once. It runs no server and adds no telemetry; it invokes your installed Codex CLI over local stdio using your existing login, and never requests account details unless you pass `--include-account`.
 
 ## Development
 
 ```bash
 npm test
 npm run check
-npm run build
-node dist/bin/minmaxxer.js doctor --json
 ```
